@@ -1,16 +1,12 @@
 package eu.imaintenance.toolset;
 
-import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
+import java.util.Iterator;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,17 +14,13 @@ import org.slf4j.LoggerFactory;
 import de.fraunhofer.iosb.ilt.sta.ServiceFailureException;
 import de.fraunhofer.iosb.ilt.sta.model.Datastream;
 import de.fraunhofer.iosb.ilt.sta.model.Thing;
+import de.fraunhofer.iosb.ilt.sta.model.ext.EntityList;
 import de.fraunhofer.iosb.ilt.sta.service.SensorThingsService;
 import eu.imaintenance.toolset.api.ObservationHandler;
 import eu.imaintenance.toolset.api.Producer;
-import eu.imaintenance.toolset.helper.JSON;
-import eu.imaintenance.toolset.helper.KafkaSetting;
-import eu.imaintenance.toolset.kafka.Consumer;
-import eu.imaintenance.toolset.kafka.ObservationSender;
 import eu.imaintenance.toolset.measurement.OMMeasurementHandler;
-import eu.imaintenance.toolset.measurement.OMTruthObservation;
+import eu.imaintenance.toolset.measurement.OMTruthObservationHandler;
 import eu.imaintenance.toolset.observation.ObservationProcessor;
-import eu.imaintenance.toolset.observation.ObservationType;
 
 public class ToolsetClient {
     private Logger logger = LoggerFactory.getLogger(ToolsetClient.class);
@@ -36,96 +28,185 @@ public class ToolsetClient {
      * Service Object connected to the SensorThings-Server
      */
     private SensorThingsService service;
+
     /**
      * Runnable class listening to the kafka topics
      */
-    private List<Consumer> consumers = new ArrayList<Consumer>();
+   
+    private Map<Long, ObservationProcessor> processor = new HashMap<Long, ObservationProcessor>();
     
-    private ObservationProcessor observationProcessor;
+    private String clientName = UUID.randomUUID().toString();
     
-    private Map<Long, Class<?>> adapter = new HashMap<Long, Class<?>>();
-    private Map<Class<?>, ObservationHandler<?> > handlers = new HashMap<Class<?>, ObservationHandler<?>>();
-    private String clientName;
-    
-    private List<String> kafkaHosts = new ArrayList<String>();
-    private List<String> topics = new ArrayList<String>();
-
+    /**
+     * Default constructor. Creates <i>empty</i> client. The <b>mandatory</b> service uri must be set
+     * with {@link ToolsetClient#withServiceUri(String)} before further usage!
+     */
     public ToolsetClient() {
         // default
     }
+    /**
+     * Constructor taking a URI pointing to the SensorThings server.
+     * @param serviceUri
+     * @throws MalformedURLException
+     * @throws URISyntaxException
+     */
     public ToolsetClient(String serviceUri) throws MalformedURLException, URISyntaxException {
         service = new SensorThingsService(URI.create(serviceUri).toURL());
     }
-
+    /**
+     * Specify the SensorThings Service URI
+     * @param serviceUri
+     * @return
+     * @throws MalformedURLException
+     * @throws URISyntaxException
+     */
     public ToolsetClient withServiceUri(String serviceUri) throws MalformedURLException, URISyntaxException {
         service = new SensorThingsService(URI.create(serviceUri).toURL());
         return this;
     }
-    public ToolsetClient forThing(Long thingId) throws ServiceFailureException {
+    /**
+     * Methond creating 
+     * @param thingIds
+     * @return
+     * @throws ServiceFailureException
+     */
+    public ToolsetClient forThing(Long ... thingIds) throws ServiceFailureException {
         if (service == null ) {
             throw new IllegalStateException("No service URI set - use withServiceUri before!");
         }
+        for (Long thingId : thingIds) {
+            Thing theThing = service.things().find(thingId);
+            if ( theThing == null ) {
+                throw new IllegalStateException(String.format("Thing(%s) not found!", thingId));
+            }
+            // register the observation processor
+            registerObservationProcessor(theThing);
+        }
+        return this;
+
+    }
+    public ToolsetClient forThing(String thingName) throws ServiceFailureException {
+        if (service == null ) {
+            throw new IllegalStateException("No service URI set - use withServiceUri before!");
+        }
+        EntityList<Thing> things = service.things().query().filter(String.format("%s eq '%s'", "name", thingName)).list();
+        if ( things.size() > 1) {
+            // in case there are more "things with the same name!
+            throw new ServiceFailureException("The name of the thing is ambigious! - use the respective ID's ");
+        }
+        Iterator<Thing> thingIterator = things.iterator();
+        while ( thingIterator.hasNext() ) {
+            registerObservationProcessor(thingIterator.next());
+        }
+        return this;
+    }
+    public ToolsetClient registerHandler(Long thingId, ObservationHandler<?> handler) throws ServiceFailureException {
         Thing theThing = service.things().find(thingId);
-        processKafkaSettings(theThing);
-        // create the basic observation adapter for the observed thing!
-        observationProcessor = new ObservationProcessor(theThing);
+        ObservationProcessor proc = registerObservationProcessor(theThing);
+        proc.registerHandler(handler);
         return this;
-
     }
-    /**
-     * Helper method for adding new (non-configured) kafka hosts
-     * @param host
-     * @return
-     */
-    public ToolsetClient withHosts(String ... host) {
-        for( String h : host ) {
-            if (!kafkaHosts.contains(h)) {
-                logger.info("adding {} to the list of Kafka Hosts ...", h);
-                kafkaHosts.add(h);
-            }
+    public ToolsetClient registerHandler(String thingName, ObservationHandler<?> handler) throws ServiceFailureException {
+        Iterator<Thing> thingIterator = service.things().query().filter(filterEquals("name",thingName)).list().iterator();
+        while (thingIterator.hasNext()) {
+            Thing theThing = thingIterator.next();
+            ObservationProcessor proc = registerObservationProcessor(theThing);
+            proc.registerHandler(handler);
         }
         return this;
     }
-    /**
-     * Helper method for adding new (non-configured) topics
-     * @param topicList
-     * @return
-     */
-    public ToolsetClient observeTopics(String ... topicList) {
-        for( String h : topicList ) {
-            if (!topics.contains(h)) {
-                logger.info("adding {} to the list of watched topics ...", h);
-                topics.add(h);
-            }
-        }
-        return this;
-    }
-    public ToolsetClient registerObservationHanlder(ObservationHandler<?> handler, String...datastreamNames) {
-        if (observationProcessor == null ) {
-            throw new IllegalStateException("No service URI set - use withServiceUri before!");
-        }
-        if ( datastreamNames == null || datastreamNames.length == 0 ) {
-            observationProcessor.registerHandler(handler);
+    public ToolsetClient registerHandler(Thing theThing, ObservationHandler<?> handler, Long ...datastreamIds ) throws ServiceFailureException {
+        ObservationProcessor proc = registerObservationProcessor(theThing);
+        if ( datastreamIds == null || datastreamIds.length == 0) {
+            proc.registerHandler(handler);
         }
         else {
-            for ( String id : datastreamNames ) {
-                observationProcessor.registerHandler(handler, id);
+            for (Long datastreamId : datastreamIds) {
+                Datastream stream = theThing.datastreams().find(datastreamId);
+                proc.registerHandler(handler, stream);
             }
-
         }
         return this;
     }
-    public ToolsetClient registerObservationHandler(ObservationHandler<?> handler, Long ... datastreams) {
-        if (observationProcessor == null ) {
-            throw new IllegalStateException("No service URI set - use withServiceUri before!");
-        }
-        if ( datastreams == null || datastreams.length == 0 ) {
-            observationProcessor.registerHandler(handler);
+    public ToolsetClient registerHandler(Thing theThing, ObservationHandler<?> handler, String ...datastreamNames ) throws ServiceFailureException {
+        ObservationProcessor proc = registerObservationProcessor(theThing);
+        if ( datastreamNames == null || datastreamNames.length == 0) {
+            proc.registerHandler(handler);
         }
         else {
-            for ( Long id : datastreams ) {
-                observationProcessor.registerHandler(handler, id);
+            for (String datastreamName : datastreamNames) {
+                
+                Iterator<Datastream> streamIterator = theThing.datastreams().query().filter(filterEquals("name", datastreamName)).list().iterator();
+                while (streamIterator.hasNext()) {
+                    Datastream stream = streamIterator.next();
+                    proc.registerHandler(handler, stream);
+                }
             }
+        }
+        return this;
+    }
+    public ToolsetClient registerHandler(Long thingId, ObservationHandler<?> handler, Long ...datastreamIds ) throws ServiceFailureException {
+        Thing theThing = service.things().find(thingId);
+        if ( theThing != null ) {
+            return registerHandler(theThing, handler, datastreamIds);
+        }
+        return this;
+    }
+    public ToolsetClient registerHandler(Long thingId, ObservationHandler<?> handler, String ...datastreamNames ) throws ServiceFailureException {
+        Thing theThing = service.things().find(thingId);
+        if ( theThing != null ) {
+            return registerHandler(theThing, handler, datastreamNames);
+        }
+        return this;
+    }
+    public ToolsetClient registerHandler(String thingName, ObservationHandler<?> handler, Long ...datastreamIds ) throws ServiceFailureException {
+        Iterator<Thing> thingIterator = service.things().query().filter(filterEquals("name",thingName)).list().iterator();
+        while (thingIterator.hasNext()) {
+            Thing theThing = thingIterator.next();
+            registerHandler(theThing, handler, datastreamIds);
+        }
+        return this;
+    }
+    public ToolsetClient registerHandler(String thingName, ObservationHandler<?> handler, String ...datastreamNames ) throws ServiceFailureException {
+        Iterator<Thing> thingIterator = service.things().query().filter(filterEquals("name",thingName)).list().iterator();
+        while (thingIterator.hasNext()) {
+            Thing theThing = thingIterator.next();
+            registerHandler(theThing, handler, datastreamNames);
+        }
+        return this;
+    }
+    /**
+     * Register an observation handler to be invoked for the provided 
+     * @param handler
+     * @param datastreamNames
+     * @return
+     * @throws ServiceFailureException
+     */
+    public ToolsetClient registerHandler(ObservationHandler<?> handler, String...datastreamNames) throws ServiceFailureException {
+
+        for ( String name : datastreamNames ) {
+            Iterator<Datastream> streamIterator = service.datastreams().query().filter(filterEquals("name", name)).list().iterator();
+            while (streamIterator.hasNext()) {
+                Datastream stream = streamIterator.next();
+                ObservationProcessor proc = registerObservationProcessor(stream.getThing());
+                proc.registerHandler(handler, stream);
+                
+            }
+        }
+        return this;
+    }
+    /**
+     * Register an {@link ObservationHandler} for the provided datastream id's
+     * @param handler
+     * @param datastreams
+     * @return
+     * @throws ServiceFailureException
+     */
+    public ToolsetClient registerHandler(ObservationHandler<?> handler, Long ... datastreams) throws ServiceFailureException {
+        for ( Long id : datastreams ) {
+            Datastream stream = service.datastreams().find(id);
+            ObservationProcessor proc = registerObservationProcessor(stream.getThing());
+            proc.registerHandler(handler, stream);
         }
         return this;
     }
@@ -134,87 +215,50 @@ public class ToolsetClient {
         this.clientName = name;
         return this;
     }
-    public void sendObservation(Long stream, Object observation) {
-        
-    }
+    
     public <T> Producer<T> createProducer(Long streamId, String topic, Class<T> resultType) throws ServiceFailureException {
-        if (!topics.contains(topic)) {
-            throw new ServiceFailureException(String.format("Unknown Topic [%s]: Allowed values ->[%s]!", topic, String.join(", ", topics) ));
+        Datastream stream = service.datastreams().find(streamId);
+        if ( stream == null ) {
+            throw new ServiceFailureException(String.format("Datastream(%s) not found!", streamId));
         }
-        Datastream stream = observationProcessor.getDatastream(streamId);
-        // 
-        ObservationType obsType = ObservationType.fromString(stream.getObservationType());
-        switch (obsType) {
-        case MEASUREMENT:
-        case COUNT_OBSERVATION:
-        case CATEGORY_OBSERVATION:
-        case TRUTH_OBSERVATION:
-            if (! resultType.equals(obsType.getObservedType())) {
-                throw new ServiceFailureException(String.format("Incompatible Types: Stream %s (%s) requires %s as it's data type!", stream.getName(), stream.getId(), obsType.getObservedType().getSimpleName() ));
-            }
-            break;
-        default:
-            break;
-            
-        }
-        ObservationSender<T> prod = new ObservationSender<T>(clientName, stream, topic, null, kafkaHosts);
-        return (Producer<T>) prod;
+        Thing forThing = stream.getThing();
+        ObservationProcessor proc = registerObservationProcessor(forThing);
+        return proc.createProducer(stream, topic, resultType);
     }
-    public void startup() {
-        int numConsumers = 3;
-        final ExecutorService executor = Executors.newFixedThreadPool(numConsumers);
-        for (int i = 0; i < numConsumers; i++) {
-            // 
-            Consumer consumer = new Consumer(i, clientName, kafkaHosts, topics, observationProcessor);
-            consumers.add(consumer);
-            executor.submit(consumer);
-        }
 
-        Runtime.getRuntime().addShutdownHook(new Thread() {
-            @Override
-            public void run() {
-                for (Consumer consumer : consumers) {
-                    consumer.shutdown();
-                }
-                executor.shutdown();
-                try {
-                    executor.awaitTermination(5000, TimeUnit.MILLISECONDS);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-            }
-        });
+    public void startup() {
+        for ( Long tId : processor.keySet()) {
+            processor.get(tId).startup(clientName);
+        }
     }
     
     public void shutdown() {
         // 
         System.exit(0);
     }
-    private void processKafkaSettings(Thing theThing) {
-        Map<String, Object> props = theThing.getProperties();
-        if ( props.get("kafka") != null ) {
-            KafkaSetting k;
-            try {
-                k = JSON.deserializeFromString(props.get("kafka"), KafkaSetting.class);
-                if ( !this.topics.contains(k.topics.get("sensor"))) {
-                    logger.info("adding {} to the list of watched topics ...", k.topics.get("sensor"));
-                    this.topics.add(k.topics.get("sensor"));
-                }
-                if ( !this.topics.contains(k.topics.get("alert"))) {
-                    logger.info("adding {} to the list of watched topics ...", k.topics.get("alert"));
-                    this.topics.add(k.topics.get("alert"));
-                }
-                for ( String h : k.hosts) {
-                    if (!this.kafkaHosts.contains(h)) {
-                        logger.info("adding {} to the list of Kafka Hosts ...", h);
-                        this.kafkaHosts.add(h);
-                    }
-                }
-            } catch (IOException e) {
-                logger.error(e.getLocalizedMessage());
-            }
+    /**
+     * Helper method formatting sensor things filters
+     * @param name
+     * @param value
+     * @return
+     * @throws ServiceFailureException
+     */
+    private String filterEquals(String name, String value) throws ServiceFailureException {
+        return String.format("%s eq '%s'", name, value);
+    }
+    /**
+     * Creates and registers the internal {@link ObservationProcessor}
+     * @param aThing
+     * @return
+     */
+    private ObservationProcessor registerObservationProcessor(Thing aThing) {
+        // register only once
+        if (! processor.containsKey(aThing.getId())) {
+            ObservationProcessor thingProcessor = new ObservationProcessor(aThing);
+            processor.put(aThing.getId(), thingProcessor);
+            return thingProcessor;
         }
-        
+        return processor.get(aThing.getId());
     }
     /**
      * Demonstrating the use of MaintenanceClient
@@ -230,13 +274,16 @@ public class ToolsetClient {
             .setName("ToolsetClient");
         
         // register a handler which is only invoked on datastreams 2, 3
-        client.registerObservationHandler(new OMMeasurementHandler(), 2l, 3l);
+        client.registerHandler(new OMMeasurementHandler(), 2l, 3l);
         // register a handler which is invoked on all measurements (expecting double)
-        client.registerObservationHandler(new OMMeasurementHandler());
+//        client.registerHandlerByName(new OMMeasurementHandler());
+        client.registerHandler(1l, new OMMeasurementHandler());
         // register a handler wich is invoked on the datastream named "Temp511"
-        client.registerObservationHanlder(new OMTruthObservation(), "Temp511");
+        client.registerHandler(new OMTruthObservationHandler(), "Temp511");
         // start the message listener
         client.startup();
+        
+
         
     }
 }

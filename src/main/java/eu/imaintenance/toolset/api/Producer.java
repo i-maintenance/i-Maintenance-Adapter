@@ -5,7 +5,12 @@ import java.time.Instant;
 
 import org.apache.kafka.clients.producer.Callback;
 
-
+/**
+ * 
+ * @author dglachs
+ *
+ * @param <T>
+ */
 
 public interface Producer<T> {
     /**
@@ -61,4 +66,8 @@ public interface Producer<T> {
      * @return
      */
     boolean send(T value, Instant when, Duration duration, Callback callback);
+    /**
+     * Close the {@link Producer}. Upon closing the producer is no longer usable!
+     */
+    void close();
 }

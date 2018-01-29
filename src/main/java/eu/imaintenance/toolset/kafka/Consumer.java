@@ -19,14 +19,12 @@ import eu.imaintenance.toolset.observation.ObservationProcessor;
 public class Consumer implements Runnable {
     private Logger logger = LoggerFactory.getLogger(Consumer.class);
     private final KafkaConsumer<String, String> consumer;
-    private final int id;
     private final String host;
     private final List<String> topics;
     private final ObservationProcessor processor;
     
 
     public Consumer(int id, String groupId, List<String> hosts, List<String> topics, ObservationProcessor processor) {
-        this.id = id;
         this.topics = topics;
         this.host = String.join(",", hosts);
         this.processor = processor;

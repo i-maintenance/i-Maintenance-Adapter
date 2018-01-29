@@ -12,7 +12,6 @@ import eu.imaintenance.toolset.api.ObservationHandler;
  */
 public abstract class AbstractObservationHandler<T> implements ObservationHandler<T> {
     
-    Class<T> clazz;
     /**
      * Default implementation extracting the generic type of the {@link ObservationHandler}
      */

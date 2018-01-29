@@ -5,8 +5,17 @@ import org.slf4j.LoggerFactory;
 
 import de.fraunhofer.iosb.ilt.sta.ServiceFailureException;
 import de.fraunhofer.iosb.ilt.sta.model.Observation;
+import eu.imaintenance.toolset.api.ObservationHandler;
 import eu.imaintenance.toolset.observation.AbstractObservationHandler;
-
+import eu.imaintenance.toolset.observation.ObservationType;
+/**
+ * Example implementation for an {@link ObservationType#MEASUREMENT} handler.
+ * This handler extends {@link AbstractObservationHandler} thus need not 
+ * implement the {@link ObservationHandler#getObservedType()} method.
+ * 
+ * @author dglachs
+ *
+ */
 public class OMMeasurementHandler extends AbstractObservationHandler<Double> {
     Logger logger = LoggerFactory.getLogger(OMMeasurementHandler.class);
 

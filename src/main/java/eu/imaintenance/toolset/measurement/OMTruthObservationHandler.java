@@ -6,8 +6,16 @@ import org.slf4j.LoggerFactory;
 import de.fraunhofer.iosb.ilt.sta.ServiceFailureException;
 import de.fraunhofer.iosb.ilt.sta.model.Observation;
 import eu.imaintenance.toolset.api.ObservationHandler;
+import eu.imaintenance.toolset.observation.ObservationType;
 
-public class OMTruthObservation implements ObservationHandler<Boolean> {
+/**
+ * Example implementation for a {@link ObservationType#TRUTH_OBSERVATION} handler.
+ * This particular observation specifies {@link Boolean} as it's type.
+ * 
+ * @author dglachs
+ *
+ */
+public class OMTruthObservationHandler implements ObservationHandler<Boolean> {
     Logger logger = LoggerFactory.getLogger(OMMeasurementHandler.class);
 
     @Override

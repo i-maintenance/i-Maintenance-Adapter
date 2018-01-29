@@ -1,10 +1,14 @@
 package eu.imaintenance.toolset.observation;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,8 +24,9 @@ import de.fraunhofer.iosb.ilt.sta.model.ext.EntityList;
 import eu.imaintenance.toolset.api.ObservationHandler;
 import eu.imaintenance.toolset.api.Producer;
 import eu.imaintenance.toolset.helper.JSON;
+import eu.imaintenance.toolset.helper.KafkaSetting;
 import eu.imaintenance.toolset.helper.ResultHelper;
-import eu.imaintenance.toolset.kafka.ObservationSender;
+import eu.imaintenance.toolset.kafka.Consumer;
 /**
  * Helper class performing the mapping of datastreams and their id's
  * @author dglachs
@@ -54,8 +59,21 @@ public final class ObservationProcessor {
      */
     private Map<Class<?>, ObservationHandler<?> > typedHandler = new HashMap<Class<?>, ObservationHandler<?>>();
     
+    private List<Consumer> consumers = new ArrayList<Consumer>();
+    
+    private List<String> hosts = new ArrayList<String>();
+    private List<String> topics = new ArrayList<String>();
+    
     public ObservationProcessor(Thing theThing) {
         this.theThing = theThing;
+        processKafkaSettings(this.theThing);
+    }
+    public ObservationProcessor(Thing theThing, List<String> hosts, List<String> topics) {
+        this.theThing = theThing;
+        this.hosts = hosts !=null ? hosts: new ArrayList<String>();
+        this.topics = topics != null ? topics : new ArrayList<String>();
+        processKafkaSettings(this.theThing);
+        
     }
     /**
      * Register a {@link ObservationHandler} with the given datastream id
@@ -77,9 +95,15 @@ public final class ObservationProcessor {
         }
         
     }
+    public <T> void registerHandler(ObservationHandler<T> handler, Datastream stream) throws ServiceFailureException {
+        // register only if steam belongs to the processors thing
+        if ( stream.getThing().getId()== theThing.getId()) {
+            registerDatastream(stream, handler);
+        }
+    }
     public <T> void registerHandler(ObservationHandler<T> handler, String name) {
         try {
-            EntityList<Datastream> streams = theThing.datastreams().query().filter(String.format("name eq '%s'", name)).list();
+            EntityList<Datastream> streams = theThing.datastreams().query().filter(String.format("%s eq '%s'", "name",name)).list();
             Iterator<Datastream> iterator = streams.iterator();
             while (iterator.hasNext() ) {
                 Datastream stream = iterator.next();
@@ -90,12 +114,34 @@ public final class ObservationProcessor {
         }
         
     }
+    public void startup(String clientName) {
+        int numConsumers = 3;
+        final ExecutorService executor = Executors.newFixedThreadPool(numConsumers);
+        for (int i = 0; i < numConsumers; i++) {
+            // 
+            
+            Consumer consumer = new Consumer(i, String.format("%s: %s", clientName, theThing.getName()), hosts, topics, this);
+            consumers.add(consumer);
+            executor.submit(consumer);
+        }
 
-
-    public <T> Producer<T> createSender(String name, Datastream stream, String topic, List<String> hosts, Class<T> clazz) {
-        ObservationSender<T> prod = new ObservationSender<T>(name, stream, topic, null, hosts);
-        return (Producer<T>) prod;
+        Runtime.getRuntime().addShutdownHook(new Thread() {
+            @Override
+            public void run() {
+                for (Consumer consumer : consumers) {
+                    consumer.shutdown();
+                }
+                executor.shutdown();
+                try {
+                    executor.awaitTermination(5000, TimeUnit.MILLISECONDS);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        });
     }
+
+
     /**
      * Helper method to retrieve a datastream. If not found a {@link ServiceFailureException} is thrown.
      * @param streamId The stream to obtain
@@ -243,6 +289,53 @@ public final class ObservationProcessor {
             T typed = JSON.deserializeFromString(helper.toString(), handler.getObservedType()); 
             handler.onObservation(observation, typed);
         }
+    }
+    private void processKafkaSettings(Thing theThing) {
+        Map<String, Object> props = theThing.getProperties();
+        if ( props.get("kafka") != null ) {
+            KafkaSetting k;
+            try {
+                k = JSON.deserializeFromString(props.get("kafka"), KafkaSetting.class);
+                if ( !this.topics.contains(k.topics.get("sensor"))) {
+                    logger.info("adding {} to the list of watched topics ...", k.topics.get("sensor"));
+                    this.topics.add(k.topics.get("sensor"));
+                }
+                if ( !this.topics.contains(k.topics.get("alert"))) {
+                    logger.info("adding {} to the list of watched topics ...", k.topics.get("alert"));
+                    this.topics.add(k.topics.get("alert"));
+                }
+                for ( String h : k.hosts) {
+                    if (!this.hosts.contains(h)) {
+                        logger.info("adding {} to the list of Kafka Hosts ...", h);
+                        this.hosts.add(h);
+                    }
+                }
+            } catch (IOException e) {
+                logger.error(e.getLocalizedMessage());
+            }
+        }
+        
+    }
+    public boolean verifyTopic(String topic) throws ServiceFailureException {
+        if (! this.topics.contains(topic)) {
+            throw new ServiceFailureException(String.format("Topic [%s] is not supported for [%s]!", topic, theThing.getName()));
+        }
+        return true;
+    }
+    public boolean verifyDatastreamType(Datastream stream, Class<?> clazz) throws ServiceFailureException {
+        ObservationType obsType = ObservationType.fromString(stream.getObservationType());
+        if (! obsType.getObservedType().isAssignableFrom(clazz)) {
+            throw new ServiceFailureException(
+                    String.format("Incompatible Types: Stream %s (%s) requires %s as it's data type!", stream.getName(), stream.getId(), obsType.getObservedType().getSimpleName() ));
+        }
+        return true;
+    }
+    public <T> Producer<T> createProducer(Datastream stream, String topic, Class<T> resultType ) throws ServiceFailureException {
+        verifyTopic(topic);
+        verifyDatastreamType(stream, resultType);
+        ObservationSender<T> s = new ObservationSender<T>(theThing.getName(), stream, topic, null, this.hosts);
+        return (Producer<T>)s;
+
     }
 
 }
