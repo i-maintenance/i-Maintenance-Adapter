@@ -5,8 +5,26 @@ import java.time.Instant;
 
 import org.apache.kafka.clients.producer.Callback;
 
+import de.fraunhofer.iosb.ilt.sta.model.Datastream;
+import de.fraunhofer.iosb.ilt.sta.model.Observation;
+import de.fraunhofer.iosb.ilt.sta.model.Thing;
+
 /**
- * 
+ * Interface provided to the clients for sending their data to the
+ * messaging infrastructure. Clients may obtain a {@link Producer}
+ * by requesting
+ * <pre>
+ * ToolsetClient client = new ToolsetClient().withServiceUri("uri");
+ * Producer<Double> producer = client.createProducer(
+ *          10l,          // id of a datastream to send data to
+ *          "topic",      // name of the topic to use for sending
+ *          Double.class);// denotes the type of the message-payload
+ *                        
+ * producer.send(123.3);
+ * </pre> 
+ * Each call of the {@link Producer#send(Object)} method will create
+ * an {@link Observation}, link this observation with the {@link Datastream}
+ * and the corresponding {@link Thing}. 
  * @author dglachs
  *
  * @param <T>
