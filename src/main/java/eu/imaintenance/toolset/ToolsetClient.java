@@ -3,8 +3,10 @@ package eu.imaintenance.toolset;
 import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -13,14 +15,16 @@ import org.slf4j.LoggerFactory;
 
 import de.fraunhofer.iosb.ilt.sta.ServiceFailureException;
 import de.fraunhofer.iosb.ilt.sta.model.Datastream;
+import de.fraunhofer.iosb.ilt.sta.model.Id;
 import de.fraunhofer.iosb.ilt.sta.model.Thing;
 import de.fraunhofer.iosb.ilt.sta.model.ext.EntityList;
 import de.fraunhofer.iosb.ilt.sta.service.SensorThingsService;
 import eu.imaintenance.toolset.api.ObservationHandler;
 import eu.imaintenance.toolset.api.Producer;
-import eu.imaintenance.toolset.measurement.OMMeasurementHandler;
-import eu.imaintenance.toolset.measurement.OMTruthObservationHandler;
 import eu.imaintenance.toolset.observation.ObservationProcessor;
+import eu.imaintenance.toolset.observation.ObservationType;
+import eu.imaintenance.toolset.observation.handler.OMMeasurementHandler;
+import eu.imaintenance.toolset.observation.handler.OMTruthObservationHandler;
 
 public class ToolsetClient {
     private Logger logger = LoggerFactory.getLogger(ToolsetClient.class);
@@ -33,7 +37,7 @@ public class ToolsetClient {
      * Runnable class listening to the kafka topics
      */
    
-    private Map<Long, ObservationProcessor> processor = new HashMap<Long, ObservationProcessor>();
+    private Map<Id, ObservationProcessor> processor = new HashMap<Id, ObservationProcessor>();
     
     private String clientName = UUID.randomUUID().toString();
     
@@ -100,21 +104,77 @@ public class ToolsetClient {
         }
         return this;
     }
+    public List<Thing> getThings() throws ServiceFailureException {
+        List<Thing> things = new ArrayList<Thing>();
+        Iterator<Thing> thingIterator = service.things().query().list().iterator();
+        while (thingIterator.hasNext()) {
+            things.add(thingIterator.next());
+        }
+        return things;
+    }
+    public List<Datastream> getDatastreams(ObservationType ofType) throws ServiceFailureException {
+        List<Datastream> things = new ArrayList<Datastream>();
+        Iterator<Datastream> thingIterator = service.datastreams()
+                .query()
+                .filter(filterEquals("observationType", ofType.getType()))
+                .list().fullIterator();
+        while (thingIterator.hasNext()) {
+            things.add(thingIterator.next());
+        }
+        return things;
+    }
+    /**
+     * Register an {@link ObservationHandler} for datastreams assigned to the given Thing. The handler is assigned
+     * to all compatible {@link Datastream}s.
+     * @param thingId The id of the thing to observe
+     * @param handler A subclass of {@link ObservationHandler}
+     * @return
+     * @throws ServiceFailureException
+     */
     public ToolsetClient registerHandler(Long thingId, ObservationHandler<?> handler) throws ServiceFailureException {
         Thing theThing = service.things().find(thingId);
-        ObservationProcessor proc = registerObservationProcessor(theThing);
-        proc.registerHandler(handler);
-        return this;
+        // register the handler for the entier thing
+        return registerHandler(theThing, handler);
     }
+    /**
+     * Register an {@link ObservationHandler} for datastreams assigned to the given Thing. The handler is assigned
+     * to all compatible {@link Datastream}s. 
+     * @param thingName The name of the thing to observe
+     * @param handler A subclass of {@link ObservationHandler}
+     * @return
+     * @throws ServiceFailureException In case the metadata for the thing cannot be retrieved!
+     */
     public ToolsetClient registerHandler(String thingName, ObservationHandler<?> handler) throws ServiceFailureException {
         Iterator<Thing> thingIterator = service.things().query().filter(filterEquals("name",thingName)).list().iterator();
         while (thingIterator.hasNext()) {
             Thing theThing = thingIterator.next();
-            ObservationProcessor proc = registerObservationProcessor(theThing);
-            proc.registerHandler(handler);
+            // register the handler for the entire thing
+            registerHandler(theThing, handler);
         }
         return this;
     }
+    /**
+     * Register an {@link ObservationHandler} for datastreams assigned to the given Thing. The handler is assigned
+     * to all compatible {@link Datastream}s.
+     * @param thing The {@link Thing} to observe
+     * @param handler A subclass of {@link ObservationHandler}
+     * @return
+     * @throws ServiceFailureException
+     */
+    public ToolsetClient registerHandler(Thing theThing, ObservationHandler<?> handler) throws ServiceFailureException {
+        ObservationProcessor proc = registerObservationProcessor(theThing);
+        proc.registerHandler(handler);
+        return this;
+    }
+    /**
+     * Register an {@link ObservationHandler} for datastreams assigned to the given Thing. Optionally, a list of datastream
+     * id's may be provided. Only compatible {@link Datastream}s are assigned to datastreams.
+     * @param theThing The {@link Thing} to observe
+     * @param handler The {@link ObservationHandler} to 
+     * @param datastreamIds The id's of the datastreams to observe
+     * @return The instance of the ToolsetClient, to allow chaining ...
+     * @throws ServiceFailureException
+     */
     public ToolsetClient registerHandler(Thing theThing, ObservationHandler<?> handler, Long ...datastreamIds ) throws ServiceFailureException {
         ObservationProcessor proc = registerObservationProcessor(theThing);
         if ( datastreamIds == null || datastreamIds.length == 0) {
@@ -128,6 +188,15 @@ public class ToolsetClient {
         }
         return this;
     }
+    /**
+     * Register an {@link ObservationHandler} for datastreams assigned to the given Thing. Optionally, a list of datastream
+     * id's may be provided. Only compatible {@link Datastream}s are assigned to datastreams.
+     * @param theThing The {@link Thing} to observe
+     * @param handler The {@link ObservationHandler} to 
+     * @param datastreamNames The names of the datastreams to observe, the datastreams must belong to the {@link Thing} 
+     * @return The instance of the ToolsetClient, to allow chaining ...
+     * @throws ServiceFailureException
+     */
     public ToolsetClient registerHandler(Thing theThing, ObservationHandler<?> handler, String ...datastreamNames ) throws ServiceFailureException {
         ObservationProcessor proc = registerObservationProcessor(theThing);
         if ( datastreamNames == null || datastreamNames.length == 0) {
@@ -145,6 +214,15 @@ public class ToolsetClient {
         }
         return this;
     }
+    /**
+     * Register an {@link ObservationHandler} for datastreams assigned to the given Thing. Optionally, a list of datastream
+     * id's may be provided. 
+     * @param theThing The id of the {@link Thing} to observe
+     * @param handler The {@link ObservationHandler} to 
+     * @param datastreamIds The id's of the datastreams to observe, all datastreams must belong to the {@link Thing}
+     * @return The instance of the ToolsetClient, to allow chaining ...
+     * @throws ServiceFailureException
+     */
     public ToolsetClient registerHandler(Long thingId, ObservationHandler<?> handler, Long ...datastreamIds ) throws ServiceFailureException {
         Thing theThing = service.things().find(thingId);
         if ( theThing != null ) {
@@ -152,6 +230,15 @@ public class ToolsetClient {
         }
         return this;
     }
+    /**
+     * Register an {@link ObservationHandler} for datastreams assigned to the given Thing. Optionally, a list of datastream
+     * id's may be provided. 
+     * @param theThing The id of the {@link Thing} to observe
+     * @param handler The {@link ObservationHandler} to 
+     * @param datastreamNames The names of the datastreams to observe, all datastreams must belong to the {@link Thing}
+     * @return The instance of the ToolsetClient, to allow chaining ...
+     * @throws ServiceFailureException
+     */
     public ToolsetClient registerHandler(Long thingId, ObservationHandler<?> handler, String ...datastreamNames ) throws ServiceFailureException {
         Thing theThing = service.things().find(thingId);
         if ( theThing != null ) {
@@ -159,6 +246,15 @@ public class ToolsetClient {
         }
         return this;
     }
+    /**
+     * Register an {@link ObservationHandler} for datastreams assigned to the given Thing. Optionally, a list of datastream
+     * id's may be provided. 
+     * @param theThing The name of the {@link Thing} to observe
+     * @param handler The {@link ObservationHandler} to 
+     * @param datastreamIds The id's of the datastreams to observe, all datastreams must belong to the {@link Thing}
+     * @return The instance of the ToolsetClient, to allow chaining ...
+     * @throws ServiceFailureException
+     */
     public ToolsetClient registerHandler(String thingName, ObservationHandler<?> handler, Long ...datastreamIds ) throws ServiceFailureException {
         Iterator<Thing> thingIterator = service.things().query().filter(filterEquals("name",thingName)).list().iterator();
         while (thingIterator.hasNext()) {
@@ -167,6 +263,15 @@ public class ToolsetClient {
         }
         return this;
     }
+    /**
+     * Register an {@link ObservationHandler} for datastreams assigned to the given Thing. Optionally, a list of datastream
+     * id's may be provided. 
+     * @param theThing The name of the {@link Thing} to observe
+     * @param handler The {@link ObservationHandler} to 
+     * @param datastreamNames The names of the datastreams to observe, all datastreams must belong to the {@link Thing}
+     * @return The instance of the ToolsetClient, to allow chaining ...
+     * @throws ServiceFailureException
+     */
     public ToolsetClient registerHandler(String thingName, ObservationHandler<?> handler, String ...datastreamNames ) throws ServiceFailureException {
         Iterator<Thing> thingIterator = service.things().query().filter(filterEquals("name",thingName)).list().iterator();
         while (thingIterator.hasNext()) {
@@ -176,7 +281,7 @@ public class ToolsetClient {
         return this;
     }
     /**
-     * Register an observation handler to be invoked for the provided 
+     * Register an an observation handler with the named datastreams.
      * @param handler
      * @param datastreamNames
      * @return
@@ -227,7 +332,7 @@ public class ToolsetClient {
     }
 
     public void startup() {
-        for ( Long tId : processor.keySet()) {
+        for ( Id tId : processor.keySet()) {
             processor.get(tId).startup(clientName);
         }
     }
@@ -272,6 +377,8 @@ public class ToolsetClient {
             .withServiceUri("http://il060:8082/v1.0/")
             .forThing(1l)
             .setName("ToolsetClient");
+        List<Thing> things = client.getThings();
+        List<Datastream> streams = client.getDatastreams(ObservationType.MEASUREMENT);
         
         // register a handler which is only invoked on datastreams 2, 3
         client.registerHandler(new OMMeasurementHandler(), 2l, 3l);

@@ -18,15 +18,16 @@ import com.fasterxml.jackson.databind.JsonMappingException;
 
 import de.fraunhofer.iosb.ilt.sta.ServiceFailureException;
 import de.fraunhofer.iosb.ilt.sta.model.Datastream;
+import de.fraunhofer.iosb.ilt.sta.model.Id;
 import de.fraunhofer.iosb.ilt.sta.model.Observation;
 import de.fraunhofer.iosb.ilt.sta.model.Thing;
 import de.fraunhofer.iosb.ilt.sta.model.ext.EntityList;
 import eu.imaintenance.toolset.api.ObservationHandler;
 import eu.imaintenance.toolset.api.Producer;
-import eu.imaintenance.toolset.helper.JSON;
-import eu.imaintenance.toolset.helper.KafkaSetting;
-import eu.imaintenance.toolset.helper.ResultHelper;
-import eu.imaintenance.toolset.kafka.Consumer;
+import eu.imaintenance.toolset.util.json.JSON;
+import eu.imaintenance.toolset.util.json.ResultHelper;
+import eu.imaintenance.toolset.util.kafka.Consumer;
+import eu.imaintenance.toolset.util.kafka.KafkaSetting;
 /**
  * Helper class performing the mapping of datastreams and their id's
  * @author dglachs
@@ -41,19 +42,19 @@ public final class ObservationProcessor {
     /**
      * List of registered datastreams
      */
-    private Map<Long, Datastream> registeredDatastream = new HashMap<Long, Datastream>();
+    private Map<Id, Datastream> registeredDatastream = new HashMap<Id, Datastream>();
     /**
      * List of handlers assigned to a distinct datastream
      */
-    private Map<Long, ObservationHandler<?>> registeredHandler = new HashMap<Long, ObservationHandler<?>>();
+    private Map<Id, ObservationHandler<?>> registeredHandler = new HashMap<Id, ObservationHandler<?>>();
     /**
      * List of collected datastreams ...
      */
-    private Map<Long, Datastream> collectedDatastream = new HashMap<Long, Datastream>();
+    private Map<Id, Datastream> collectedDatastream = new HashMap<Id, Datastream>();
     /**
      * List of registered datastream types ...
      */
-    private Map<Long, Class<?>> registeredDatastreamType = new HashMap<Long, Class<?>>();
+    private Map<Id, Class<?>> registeredDatastreamType = new HashMap<Id, Class<?>>();
     /**
      * Mapping of observation types and ObservationHandlers
      */
@@ -174,12 +175,17 @@ public final class ObservationProcessor {
      * @param handler The observation handler object
      */
     private <T> void registerDatastream(Datastream stream, ObservationHandler<T> handler) {
-        
-        // keep the stram in the registred map
-        registeredDatastream.put(stream.getId(), stream);
-        // keep the handler mapped with the stream id
-        registeredHandler.put(stream.getId(), handler);
-        registeredDatastreamType.put(stream.getId(), handler.getObservedType());
+        ObservationType obsType = ObservationType.fromString(stream.getObservationType());
+        if ( obsType.getObservedType().isAssignableFrom(handler.getObservedType())) {
+            // keep the stram in the registred map
+            registeredDatastream.put(stream.getId(), stream);
+            // keep the handler mapped with the stream id
+            registeredHandler.put(stream.getId(), handler);
+            registeredDatastreamType.put(stream.getId(), handler.getObservedType());
+        }
+        else {
+            logger.debug(String.format("Datastream [%s] not assigned to handler [%s] - Incompatible types", stream.getName(), handler.getClass().getName()));
+        }
         // 
 
     }
@@ -205,7 +211,7 @@ public final class ObservationProcessor {
     public void processKafkaMessage(String topic, String key, String payload) throws ServiceFailureException {
         try {
             Observation observation = JSON.deserializeFromString(payload, Observation.class);
-            Long streamId = observation.getDatastream().getId();
+            Id streamId = observation.getDatastream().getId();
             if (registeredDatastream != null && registeredDatastream.containsKey(streamId)) {
                 // found the stream in the registered map
                 observation.setDatastream(registeredDatastream.get(streamId));
@@ -239,7 +245,7 @@ public final class ObservationProcessor {
         
         
     }
-    private Datastream getFromCollectedDatastreams(Long id) throws ServiceFailureException  {
+    private Datastream getFromCollectedDatastreams(Id id) throws ServiceFailureException  {
         Datastream stream = collectedDatastream.get(id);
         if ( stream == null ) {
             stream = theThing.datastreams().find(id);

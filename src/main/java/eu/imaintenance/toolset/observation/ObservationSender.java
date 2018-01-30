@@ -12,7 +12,7 @@ import de.fraunhofer.iosb.ilt.sta.ServiceFailureException;
 import de.fraunhofer.iosb.ilt.sta.model.Datastream;
 import de.fraunhofer.iosb.ilt.sta.model.Observation;
 import eu.imaintenance.toolset.api.Producer;
-import eu.imaintenance.toolset.kafka.Sender;
+import eu.imaintenance.toolset.util.kafka.Sender;
 
 public final class ObservationSender<T> implements Producer<T> {
     private final Datastream theStream;

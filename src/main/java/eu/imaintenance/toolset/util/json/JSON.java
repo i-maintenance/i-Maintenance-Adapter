@@ -1,4 +1,4 @@
-package eu.imaintenance.toolset.helper;
+package eu.imaintenance.toolset.util.json;
 
 import java.io.IOException;
 import java.util.Map;

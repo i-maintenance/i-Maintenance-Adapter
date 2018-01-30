@@ -1,4 +1,4 @@
-package eu.imaintenance.toolset.helper;
+package eu.imaintenance.toolset.util.kafka;
 
 import java.util.List;
 import java.util.Map;

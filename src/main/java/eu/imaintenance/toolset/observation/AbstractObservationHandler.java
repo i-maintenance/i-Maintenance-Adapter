@@ -21,4 +21,18 @@ public abstract class AbstractObservationHandler<T> implements ObservationHandle
         ParameterizedType genericSuperclass = (ParameterizedType) getClass().getGenericSuperclass();
         return (Class<T>) genericSuperclass.getActualTypeArguments()[0];
     }
+    /**
+     * Retrieve the {@link ObservationType} enumeration based on the handler's observed type! E.g. 
+     * <ul>
+     * <li>{@link ObservationType#MEASUREMENT} for handlers expecting {@link Double}
+     * <li>{@link ObservationType#CATEGORY_OBSERVATION} for handlers expecting {@link String}
+     * <li>{@link ObservationType#COUNT_OBSERVATION} for handlers expecting {@link Integer}
+     * <li>{@link ObservationType#TRUTH_OBSERVATION} for handlers expecting {@link Boolean}
+     * <li>{@link ObservationType#OBSERVATION} for handlers expecting arbitrary {@link Object}
+     * </ul>
+     * @return
+     */
+    public ObservationType getObservationType() {
+        return ObservationType.fromObservedClass(getObservedType());
+    }
 }

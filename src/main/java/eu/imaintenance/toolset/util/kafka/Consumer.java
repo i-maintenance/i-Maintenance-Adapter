@@ -1,4 +1,4 @@
-package eu.imaintenance.toolset.kafka;
+package eu.imaintenance.toolset.util.kafka;
 
 import java.util.HashMap;
 import java.util.List;
@@ -53,8 +53,9 @@ public class Consumer implements Runnable {
                     try {
                         processor.processKafkaMessage(record.topic(), record.key(), record.value());
                     } catch (ServiceFailureException e) {
-                        // TODO Auto-generated catch block - add logger
-                        e.printStackTrace();
+                        logger.error(e.getLocalizedMessage(), e);
+                    } catch (Exception e) {
+                        logger.error(e.getLocalizedMessage(), e);
                     }
                 }
             }
