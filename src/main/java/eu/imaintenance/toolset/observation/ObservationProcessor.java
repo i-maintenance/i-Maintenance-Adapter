@@ -271,7 +271,8 @@ public final class ObservationProcessor {
      * @throws IOException
      */
     private <T> void handlePayloadTyped(ObservationHandler<T> handler, Observation observation) throws JsonParseException, JsonMappingException, IOException {
-        Object payload = observation.getResult();
+        Object payload = preProcessPayload(handler, observation.getResult());
+        
         if ( payload instanceof Number) {
             Number n = (Number) payload;
             if ( handler.getObservedType().equals(Integer.class)) {
@@ -294,6 +295,21 @@ public final class ObservationProcessor {
             ResultHelper helper = new ResultHelper(payload);
             T typed = JSON.deserializeFromString(helper.toString(), handler.getObservedType()); 
             handler.onObservation(observation, typed);
+        }
+    }
+    private <T> Object preProcessPayload(ObservationHandler<T> handler, Object result) {
+        ObservationType obsType = ObservationType.fromObservedClass(handler.getObservedType()); 
+        switch (obsType) {
+        case MEASUREMENT:
+            return Double.parseDouble(result.toString());
+        case COUNT_OBSERVATION:
+            return Integer.parseInt(result.toString());
+        case TRUTH_OBSERVATION:
+            return Boolean.parseBoolean(result.toString());
+        case CATEGORY_OBSERVATION:
+            return result.toString();
+        default:
+            return result;
         }
     }
     private void processKafkaSettings(Thing theThing) {
