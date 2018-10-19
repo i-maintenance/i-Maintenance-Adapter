@@ -71,6 +71,11 @@ public final class ObservationSender<T> implements Producer<T> {
         observation.setValidTime(Interval.of(Instant.now(), Duration.ofSeconds(30)));
         return sender.sendObservation(observation, callback);
     }
+    
+    @Override
+    public Datastream getDatastream() {
+        return theStream;
+    }
 
     @Override
     public void close() {
