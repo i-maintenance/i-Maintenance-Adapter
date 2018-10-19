@@ -5,7 +5,7 @@ import org.slf4j.LoggerFactory;
 
 import de.fraunhofer.iosb.ilt.sta.ServiceFailureException;
 import de.fraunhofer.iosb.ilt.sta.model.Observation;
-import eu.imaintenance.toolset.api.ObservationHandler;
+import eu.imaintenance.toolset.observation.AbstractObservationHandler;
 import eu.imaintenance.toolset.observation.ObservationType;
 
 /**
@@ -15,7 +15,7 @@ import eu.imaintenance.toolset.observation.ObservationType;
  * @author dglachs
  *
  */
-public class OMTruthObservationHandler implements ObservationHandler<Boolean> {
+public class OMTruthObservationHandler extends AbstractObservationHandler<Boolean>  {
     Logger logger = LoggerFactory.getLogger(OMMeasurementHandler.class);
 
     @Override
