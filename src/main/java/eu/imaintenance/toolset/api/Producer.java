@@ -88,4 +88,9 @@ public interface Producer<T> {
      * Close the {@link Producer}. Upon closing the producer is no longer usable!
      */
     void close();
+    /**
+     * Obtain insights to the {@link Datastream}. 
+     * @return
+     */
+    public Datastream getDatastream();
 }
